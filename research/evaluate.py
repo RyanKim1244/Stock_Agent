@@ -121,12 +121,12 @@ def evaluate(hid: str, holdout: bool = False, data=None) -> dict:
             "profitability": out["excess_ann"] > 0,
             "efficiency": out["IR"] >= 0.4,
             "stability": out["regimes_positive"] >= 2,
-            "robustness": (not robust) or out["robust_min_excess"] > 0,
+            "robustness": None if not robust else out["robust_min_excess"] > 0,  # None = no parameter to move
             "multiple_tests": out["deflated_sharpe_p"] >= 0.95,
         }
-        checks = {k: bool(v) for k, v in checks.items()}
+        checks = {k: (None if v is None else bool(v)) for k, v in checks.items()}
         out["checks"] = json.dumps(checks)
-        out["verdict"] = "candidate" if all(checks.values()) else "rejected"
+        out["verdict"] = "candidate" if all(v for v in checks.values() if v is not None) else "rejected"
     else:
         out["verdict"] = "holdout_pass" if out["excess_ann"] > 0 else "holdout_fail"
     _append(out)

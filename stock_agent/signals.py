@@ -108,6 +108,17 @@ def fundamental_signals(fund_avail: pd.DataFrame) -> dict:
             "op_yield": op_yield(fund_avail), "roe": roe(fund_avail), "op_growth_yoy": op_growth_yoy(fund_avail)}
 
 
+def composite(components=("op_growth_yoy", "roe", "low_vol")):
+    """Equal-weight average of each component's cross-sectional percentile rank. A name missing a
+    component is ranked on the components it has."""
+    fs = [REGISTRY[c]() for c in components]
+
+    def f(past, s, uni):
+        ranks = pd.concat([fn(past, s, uni).rank(pct=True) for fn in fs], axis=1)
+        return ranks.mean(axis=1, skipna=True).where(ranks.notna().sum(axis=1) >= 2)
+    return f
+
+
 REGISTRY = {"momentum": momentum, "reversal": reversal, "low_vol": low_vol, "small_size": small_size,
             "earnings_yield": earnings_yield, "book_to_market": book_to_market, "op_yield": op_yield,
-            "roe": roe, "op_growth_yoy": op_growth_yoy}
+            "roe": roe, "op_growth_yoy": op_growth_yoy, "composite": composite}
