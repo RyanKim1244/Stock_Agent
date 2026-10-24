@@ -30,6 +30,13 @@ def build_panel(df: pd.DataFrame | None = None, save: bool = True) -> pd.DataFra
     chg = (df["chg_pct"].fillna(0.0) / 100.0).clip(lower=-0.99)
     # A stock's first row has no previous close: start its index at its own close.
     first = df["ticker"].ne(df["ticker"].shift())
+    # Resuming after a halt, KRX sometimes reports the change against an unadjusted base (a reverse
+    # split during the halt shows up as +29,948%). A >100% jump on the first day after a zero-volume day
+    # cannot be told apart from that error, so it is set to 0 and flagged rather than trusted.
+    prev_vol = df.groupby("ticker")["volume"].shift()
+    suspect = (~first) & (prev_vol == 0) & (chg > 1.0)
+    chg = chg.where(~suspect, 0.0)
+    df["ret_suspect"] = suspect
     chg = chg.where(~first, 0.0)
     growth = (1.0 + chg).groupby(df["ticker"]).cumprod()
     first_close = df["close"].where(first).groupby(df["ticker"]).transform("first")
