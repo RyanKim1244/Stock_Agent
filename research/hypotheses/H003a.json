@@ -1,0 +1,10 @@
+{
+ "id": "H003a",
+ "statement": "이익수익률(TTM 순이익/시가총액)이 높은 종목이 초과수익을 낸다.",
+ "rationale": "가치 효과.",
+ "signal": "earnings_yield",
+ "params": {},
+ "top": 0.2,
+ "registered": "2026-10-24",
+ "note": ""
+}

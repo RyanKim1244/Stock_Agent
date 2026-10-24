@@ -1,0 +1,10 @@
+{
+ "id": "H003c",
+ "statement": "ROE가 높은 종목이 초과수익을 낸다.",
+ "rationale": "수익성(퀄리티) 효과.",
+ "signal": "roe",
+ "params": {},
+ "top": 0.2,
+ "registered": "2026-10-24",
+ "note": ""
+}

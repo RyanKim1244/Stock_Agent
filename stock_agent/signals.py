@@ -1,5 +1,11 @@
-"""Price-based signals. Each takes (past data up to s, signal date s, universe) and returns a score;
-higher score = more attractive. Only rows dated <= s are visible (see backtest.Data.upto)."""
+"""Signals. Each signal is a function (past data up to s, signal date s, universe) -> score, higher = more
+attractive. Only rows dated <= s are visible (see backtest.Data.upto).
+
+REGISTRY maps a name to a factory taking numeric parameters, so a pre-registered hypothesis can name a
+signal and its parameters, and the robustness check can move each parameter +-20%.
+"""
+from functools import lru_cache
+
 import numpy as np
 import pandas as pd
 
@@ -11,60 +17,97 @@ def _close_ago(past, uni, n):
     return c.iloc[-1 - n] if len(c) > n else pd.Series(np.nan, uni)
 
 
-def momentum_12_1(past, s, uni):
-    """Return from 12 months ago to 1 month ago (skips the latest month)."""
-    return _close_ago(past, uni, MONTH) / _close_ago(past, uni, YEAR) - 1
+# ---------- price signals ----------
+def momentum(lookback: int = YEAR, skip: int = MONTH):
+    """Return from `lookback` days ago to `skip` days ago."""
+    def f(past, s, uni):
+        return _close_ago(past, uni, skip) / _close_ago(past, uni, lookback) - 1
+    return f
 
 
-def reversal_1m(past, s, uni):
-    """Last month's losers score high."""
-    return -(_close_ago(past, uni, 0) / _close_ago(past, uni, MONTH) - 1)
+def reversal(window: int = MONTH):
+    """Recent losers score high."""
+    def f(past, s, uni):
+        return -(_close_ago(past, uni, 0) / _close_ago(past, uni, window) - 1)
+    return f
 
 
-def low_vol(past, s, uni):
-    """Lower daily volatility over the past year scores high."""
-    return -past.ret[uni].tail(YEAR).std()
+def low_vol(window: int = YEAR):
+    """Lower daily volatility scores high."""
+    def f(past, s, uni):
+        return -past.ret[uni].tail(window).std()
+    return f
 
 
-def small_size(past, s, uni):
+def small_size():
     """Smaller market cap scores high."""
-    return -np.log(past.mcap.loc[s, uni])
+    def f(past, s, uni):
+        return -np.log(past.mcap.loc[s, uni])
+    return f
 
 
-SIGNALS = {"momentum_12_1": momentum_12_1, "reversal_1m": reversal_1m,
-           "low_vol": low_vol, "small_size": small_size}
+SIGNALS = {"momentum_12_1": momentum(), "reversal_1m": reversal(),
+           "low_vol": low_vol(), "small_size": small_size()}
+
+
+# ---------- fundamental signals ----------
+@lru_cache(maxsize=1)
+def _fund():
+    from stock_agent.data.fundamentals import asof
+    from stock_agent.data.prices import load_panel
+    from stock_agent.config import CLEAN
+    fund = pd.read_parquet(CLEAN / "fundamentals.parquet")
+    days = pd.DatetimeIndex(sorted(load_panel()["date"].unique()))
+    return asof(fund, days)
+
+
+def _latest(s, uni, fund=None):
+    from stock_agent.data.fundamentals import latest_as_of
+    return latest_as_of(_fund() if fund is None else fund, s, uni).reindex(uni)
+
+
+def earnings_yield(fund=None):
+    def f(past, s, uni):
+        x = _latest(s, uni, fund)
+        return x["net_income_ttm"] / past.mcap.loc[s, uni]
+    return f
+
+
+def book_to_market(fund=None):
+    def f(past, s, uni):
+        x = _latest(s, uni, fund)
+        return (x["equity"] / past.mcap.loc[s, uni]).where(x["equity"] > 0)
+    return f
+
+
+def op_yield(fund=None):
+    def f(past, s, uni):
+        x = _latest(s, uni, fund)
+        return x["op_income_ttm"] / past.mcap.loc[s, uni]
+    return f
+
+
+def roe(fund=None):
+    def f(past, s, uni):
+        x = _latest(s, uni, fund)
+        return (x["net_income_ttm"] / x["equity"]).where(x["equity"] > 0)
+    return f
+
+
+def op_growth_yoy(fund=None):
+    """Latest quarter's operating income minus the same quarter a year earlier, scaled by market cap
+    (a simple earnings-surprise proxy)."""
+    def f(past, s, uni):
+        x = _latest(s, uni, fund)
+        return (x["op_income_q"] - x["op_income_q_yoy"]) / past.mcap.loc[s, uni]
+    return f
 
 
 def fundamental_signals(fund_avail: pd.DataFrame) -> dict:
-    """Signals from point-in-time fundamentals (output of fundamentals.asof). Each looks up, for every
-    stock, the latest report whose `avail` date is on or before the signal date."""
-    from stock_agent.data.fundamentals import latest_as_of
+    return {"earnings_yield": earnings_yield(fund_avail), "book_to_market": book_to_market(fund_avail),
+            "op_yield": op_yield(fund_avail), "roe": roe(fund_avail), "op_growth_yoy": op_growth_yoy(fund_avail)}
 
-    def _f(past, s, uni):
-        return latest_as_of(fund_avail, s, uni).reindex(uni)
 
-    def earnings_yield(past, s, uni):
-        f = _f(past, s, uni)
-        return f["net_income_ttm"] / past.mcap.loc[s, uni]
-
-    def book_to_market(past, s, uni):
-        f = _f(past, s, uni)
-        bm = f["equity"] / past.mcap.loc[s, uni]
-        return bm.where(f["equity"] > 0)
-
-    def op_yield(past, s, uni):
-        f = _f(past, s, uni)
-        return f["op_income_ttm"] / past.mcap.loc[s, uni]
-
-    def roe(past, s, uni):
-        f = _f(past, s, uni)
-        return (f["net_income_ttm"] / f["equity"]).where(f["equity"] > 0)
-
-    def op_growth_yoy(past, s, uni):
-        """Latest quarter's operating income vs the same quarter a year earlier, scaled by market cap
-        (a simple earnings-surprise proxy)."""
-        f = _f(past, s, uni)
-        return (f["op_income_q"] - f["op_income_q_yoy"]) / past.mcap.loc[s, uni]
-
-    return {"earnings_yield": earnings_yield, "book_to_market": book_to_market, "op_yield": op_yield,
+REGISTRY = {"momentum": momentum, "reversal": reversal, "low_vol": low_vol, "small_size": small_size,
+            "earnings_yield": earnings_yield, "book_to_market": book_to_market, "op_yield": op_yield,
             "roe": roe, "op_growth_yoy": op_growth_yoy}

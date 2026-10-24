@@ -1,0 +1,10 @@
+{
+ "id": "H003b",
+ "statement": "장부가 대비 시가(자본/시가총액)가 높은 종목이 초과수익을 낸다.",
+ "rationale": "가치 효과. 한국 시장의 저PBR 디스카운트 해소 흐름.",
+ "signal": "book_to_market",
+ "params": {},
+ "top": 0.2,
+ "registered": "2026-10-24",
+ "note": ""
+}
