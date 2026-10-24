@@ -33,3 +33,38 @@ def small_size(past, s, uni):
 
 SIGNALS = {"momentum_12_1": momentum_12_1, "reversal_1m": reversal_1m,
            "low_vol": low_vol, "small_size": small_size}
+
+
+def fundamental_signals(fund_avail: pd.DataFrame) -> dict:
+    """Signals from point-in-time fundamentals (output of fundamentals.asof). Each looks up, for every
+    stock, the latest report whose `avail` date is on or before the signal date."""
+    from stock_agent.data.fundamentals import latest_as_of
+
+    def _f(past, s, uni):
+        return latest_as_of(fund_avail, s, uni).reindex(uni)
+
+    def earnings_yield(past, s, uni):
+        f = _f(past, s, uni)
+        return f["net_income_ttm"] / past.mcap.loc[s, uni]
+
+    def book_to_market(past, s, uni):
+        f = _f(past, s, uni)
+        bm = f["equity"] / past.mcap.loc[s, uni]
+        return bm.where(f["equity"] > 0)
+
+    def op_yield(past, s, uni):
+        f = _f(past, s, uni)
+        return f["op_income_ttm"] / past.mcap.loc[s, uni]
+
+    def roe(past, s, uni):
+        f = _f(past, s, uni)
+        return (f["net_income_ttm"] / f["equity"]).where(f["equity"] > 0)
+
+    def op_growth_yoy(past, s, uni):
+        """Latest quarter's operating income vs the same quarter a year earlier, scaled by market cap
+        (a simple earnings-surprise proxy)."""
+        f = _f(past, s, uni)
+        return (f["op_income_q"] - f["op_income_q_yoy"]) / past.mcap.loc[s, uni]
+
+    return {"earnings_yield": earnings_yield, "book_to_market": book_to_market, "op_yield": op_yield,
+            "roe": roe, "op_growth_yoy": op_growth_yoy}
