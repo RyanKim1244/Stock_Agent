@@ -84,28 +84,45 @@ def fetch_main_accounts(corps: list[str], year: int, reprt_code: str) -> list[di
     return js["list"]
 
 
-def collect_main_accounts(y0: int, y1: int, batch: int = 100) -> None:
+def collect_main_accounts(y0: int, y1: int, batch: int = 100, workers: int = 8) -> None:
+    """Responses are large and the link is slow per connection, so chunks are fetched in parallel."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     corps = listed_corps()["corp_code"].tolist()
     chunks = [corps[i:i + batch] for i in range(0, len(corps), batch)]
     d = OUT / "main_accounts"
     d.mkdir(parents=True, exist_ok=True)
-    calls = 0
-    for year in range(y0, y1 + 1):
-        for code, label in REPORTS.items():
-            for i, chunk in enumerate(chunks):
-                p = d / f"{year}_{label}_{i:03d}.json"
-                if p.exists():
-                    continue
-                try:
-                    rows = fetch_main_accounts(chunk, year, code)
-                except DartLimit as e:
-                    print(f"daily limit reached after {calls} calls: {e}", flush=True)
-                    return
-                p.write_text(json.dumps(rows, ensure_ascii=False))
+    jobs = [(year, code, label, i, chunk)
+            for year in range(y0, y1 + 1) for code, label in REPORTS.items()
+            for i, chunk in enumerate(chunks)
+            if not (d / f"{year}_{label}_{i:03d}.json").exists()]
+    print(f"{len(jobs)} chunks to fetch with {workers} workers", flush=True)
+    stop = False
+
+    def one(job):
+        year, code, label, i, chunk = job
+        if stop:
+            return None
+        rows = fetch_main_accounts(chunk, year, code)
+        (d / f"{year}_{label}_{i:03d}.json").write_text(json.dumps(rows, ensure_ascii=False))
+        return job
+
+    calls, t0 = 0, time.time()
+    with ThreadPoolExecutor(workers) as ex:
+        futs = [ex.submit(one, j) for j in jobs]
+        for f in as_completed(futs):
+            try:
+                job = f.result()
+            except DartLimit as e:
+                stop = True
+                print(f"daily limit reached after {calls} calls: {e}", flush=True)
+                continue
+            except Exception as e:  # noqa: BLE001  keep going; the chunk is retried on the next run
+                print(f"chunk failed: {type(e).__name__}: {e}", flush=True)
+                continue
+            if job:
                 calls += 1
                 if calls % 25 == 0:
-                    print(f"{year} {label} chunk {i}/{len(chunks)} calls={calls}", flush=True)
-                time.sleep(0.3)
+                    print(f"{job[0]} {job[2]} calls={calls}/{len(jobs)} elapsed={time.time() - t0:.0f}s", flush=True)
     print(f"finished, calls={calls}", flush=True)
 
 
