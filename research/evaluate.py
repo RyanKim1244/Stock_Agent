@@ -124,6 +124,7 @@ def evaluate(hid: str, holdout: bool = False, data=None) -> dict:
             "robustness": (not robust) or out["robust_min_excess"] > 0,
             "multiple_tests": out["deflated_sharpe_p"] >= 0.95,
         }
+        checks = {k: bool(v) for k, v in checks.items()}
         out["checks"] = json.dumps(checks)
         out["verdict"] = "candidate" if all(checks.values()) else "rejected"
     else:
